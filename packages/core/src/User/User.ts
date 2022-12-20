@@ -1,0 +1,134 @@
+import { ID, Amount, Stock, Quantity, OperationResponseStatus } from '../util/Datatypes';
+import { Wallet } from './Wallet';
+import { Holding, HoldingsData } from './Holding';
+import { OrderType, Order, OrderStatus, AdditionalOrderType, OrderInput } from '../Order/Order';
+import { Market } from '../Market';
+import { OrderStoreResponse, OrderStore } from '../Order/OrderStore';
+
+export interface IUser {
+    id: ID;
+    name: string;
+    wallet: Wallet;
+    holdings: Holding;
+    orders: OrderStore;
+}
+
+export class User {
+    private id: ID;
+    private name: string;
+    wallet: Wallet;
+    holdings: Holding;
+    orders: OrderStore;
+    private static nextId: ID = 1;
+
+    constructor(name: string, balance: Amount, holdings?: HoldingsData) {
+        this.id = User.nextId++;
+        this.name = name;
+        this.wallet = new Wallet(balance);
+        this.holdings = new Holding(holdings || {});
+        this.orders = new OrderStore();
+    }
+
+    getId(): ID {
+        return this.id;
+    }
+
+    getName(): string {
+        return this.name;
+    }
+
+    public placeOrder(
+        symbol: Stock,
+        type: OrderType,
+        additionalType: AdditionalOrderType.Limit,
+        quantity: Quantity,
+        price: Amount,
+    ): OrderStoreResponse;
+
+    public placeOrder(
+        symbol: Stock,
+        type: OrderType,
+        additionalType: AdditionalOrderType.Market,
+        quantity: Quantity,
+    ): OrderStoreResponse;
+
+    public placeOrder(
+        symbol: Stock,
+        type: OrderType,
+        additionalType: AdditionalOrderType,
+        quantity: Quantity,
+        price?: Amount,
+    ): OrderStoreResponse {
+        let order: OrderInput;
+        if (additionalType === AdditionalOrderType.Market) {
+            order = {
+                quantity: quantity,
+                symbol: symbol,
+                type: type,
+                additionalType: AdditionalOrderType.Market,
+                user: this,
+            };
+        } else {
+            order = {
+                quantity: quantity,
+                symbol: symbol,
+                type: type,
+                additionalType: AdditionalOrderType.Limit,
+                user: this,
+                price: price || 0,
+            };
+        }
+        try {
+            this.simulatePlaceOrder(order);
+            return { data: Market.getInstance().placeOrder(order), status: OperationResponseStatus.Success };
+        } catch (err) {
+            return { status: OperationResponseStatus.Error, messages: [{ message: err.message }] };
+        }
+    }
+
+    private simulatePlaceOrder(order: OrderInput): boolean {
+        if (order.type === OrderType.Buy) {
+            const marginRequired = Market.getInstance().getMarginRequired(order);
+            if (this.wallet.getMargin() < marginRequired) {
+                throw new Error('Not enough margin to do this operation');
+            }
+        } else {
+            if (
+                this.holdings.getHolding(order.symbol) <
+                order.quantity + this.orders.getSellOrdersQuantityToSettle(order.symbol)
+            ) {
+                throw new Error('Not enough holdings to do this operation');
+            }
+        }
+        return true;
+    }
+    notifyOrderUpdate(order: Order): void {
+        if (order.user !== this) {
+            throw new Error('Order is not placed by this user.');
+        }
+        const orderType = order.getOrderType();
+        if (order.getStatus() === OrderStatus.Confirmed) {
+            this.orders.confirmOrder(order);
+            if (orderType === OrderType.Buy) {
+                this.wallet.updateMargin(order.getQuantity() * order.getPrice() - order.getAmountSettled());
+            }
+        }
+        const settlement = order.getLatestSettlement();
+        if (orderType === OrderType.Buy) {
+            this.holdings.addHolding({ stock: order.getSymbol(), quantity: settlement.quantity });
+        } else if (orderType === OrderType.Sell) {
+            this.holdings.releaseHolding({ stock: order.getSymbol(), quantity: settlement.quantity });
+            this.wallet.updateMargin(settlement.quantity * settlement.price);
+        }
+        Market.getInstance().getNotification()?.notifyOrderUpdate(this, order);
+    }
+
+
+    notifyOrderAdd(order: Order): void {
+        this.orders.addOrder(order);
+        if (order.getOrderType() === OrderType.Buy) {
+            this.wallet.updateMargin(-order.getQuantity() * order.getPrice());
+        }
+        Market.getInstance().getNotification()?.notifyOrderUpdate(this, order);
+    }
+}

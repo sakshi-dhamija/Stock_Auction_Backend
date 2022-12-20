@@ -1,6 +1,6 @@
 import { Quantity, ID, Amount, Stock } from '../util/Datatypes';
 import { User } from '../User/User';
-import { Market } from '../Market/Market';
+import { Market } from '../Market';
 
 export enum OrderType {
     'Buy' = 'Buy',
@@ -122,9 +122,6 @@ export class Order {
         return settledBy[settledBy.length - 1];
     }
 
-    /**
-     * Settled time of a confirmed order would be the time of the last order in the settledBy array.
-     */
     getSettledTime(): Date {
         if (this.status === OrderStatus.Confirmed && this.settledBy.length > 0) {
             return this.settledBy[this.settledBy.length - 1].time;
@@ -132,9 +129,6 @@ export class Order {
         throw new Error('Order not confirmed');
     }
 
-    /**
-     * If an order is confirmed, return the average settled price of the order by checking the settledBy array.
-     */
     getAvgSettledPrice(): Amount {
         if (this.status === OrderStatus.Confirmed) {
             return this.getAmountSettled() / this.quantity;
@@ -154,11 +148,6 @@ export class Order {
         return this.quantity - this.getQuantitySettled();
     }
 
-    /**
-     * Allow Order Status change from Placed -> PartiallyFilled or Confirmed
-     *                                PartiallyFilled -> Confirmed
-     * @param status New status
-     */
     setStatus(status: OrderStatus): void {
         if (
             (this.status === OrderStatus.Placed &&

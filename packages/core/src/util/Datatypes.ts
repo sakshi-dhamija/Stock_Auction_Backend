@@ -1,6 +1,3 @@
-/**
- * Hardcoded list of symbols
- */
  export enum Stock {
     'RIL' = 'RIL',
     'TSLA' = 'TSLA',
